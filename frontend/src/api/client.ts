@@ -1,4 +1,11 @@
-import type { ApiErrorBody, ApiErrorEnvelope } from "@/types/api";
+import type {
+  ApiErrorBody,
+  ApiErrorEnvelope,
+  InventoryListResponse,
+  InventoryRow,
+  ReleaseResponse,
+  Reservation,
+} from "@/types/api";
 
 const SESSION_KEY = "flashsale.sessionId";
 
@@ -11,8 +18,6 @@ function ensureSessionId(): string {
   return id;
 }
 
-// ApiError is thrown by the request helpers when the server returns a typed
-// error envelope. Components catch it and branch on `body.code`.
 export class ApiError extends Error {
   body: ApiErrorBody;
   status: number;
@@ -43,8 +48,6 @@ async function request<T>(
   }
 
   const res = await fetch(path, { ...init, method, headers });
-
-  // 204 No Content is unused by this API; every response has a JSON body.
   const text = await res.text();
   const json = text ? (JSON.parse(text) as unknown) : null;
 
@@ -62,23 +65,35 @@ async function request<T>(
   return json as T;
 }
 
-export function apiGet<T>(path: string): Promise<T> {
-  return request<T>("GET", path);
+export function listSales(): Promise<InventoryListResponse> {
+  return request<InventoryListResponse>("GET", "/api/sales");
 }
 
-export function apiPost<T>(
-  path: string,
-  body: unknown,
-  opts: { idempotencyKey?: string } = {},
-): Promise<T> {
-  return request<T>("POST", path, {
-    body: JSON.stringify(body),
-    idempotencyKey: opts.idempotencyKey,
-  });
+export function getInventory(saleId: string): Promise<InventoryRow> {
+  return request<InventoryRow>("GET", `/api/sales/${saleId}/inventory`);
 }
 
-export function apiDelete<T>(path: string): Promise<T> {
-  return request<T>("DELETE", path);
+export function reserveSale(
+  saleId: string,
+  quantity: number,
+  idempotencyKey: string,
+): Promise<Reservation> {
+  return request<Reservation>(
+    "POST",
+    `/api/sales/${saleId}/reservations`,
+    {
+      body: JSON.stringify({ quantity }),
+      idempotencyKey,
+    },
+  );
+}
+
+export function getReservation(reservationId: string): Promise<Reservation> {
+  return request<Reservation>("GET", `/api/reservations/${reservationId}`);
+}
+
+export function releaseReservation(reservationId: string): Promise<ReleaseResponse> {
+  return request<ReleaseResponse>("DELETE", `/api/reservations/${reservationId}`);
 }
 
 export { ensureSessionId };

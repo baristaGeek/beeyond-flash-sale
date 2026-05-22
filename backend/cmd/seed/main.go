@@ -1,6 +1,7 @@
-// Command seed inserts a deterministic demo sale into the database so the
-// frontend always has something to point at during development. Idempotent:
-// re-running is a no-op via INSERT ... ON CONFLICT DO NOTHING.
+// Command seed inserts the demo product catalog into the database so the
+// frontend always has something to display. Idempotent: re-running is a no-op
+// via INSERT ... ON CONFLICT DO NOTHING. The deterministic UUIDs let the
+// frontend deep-link to a specific product.
 //
 // Usage: go run ./cmd/seed
 package main
@@ -18,32 +19,32 @@ import (
 	"github.com/google/uuid"
 )
 
-// DemoSaleID is the deterministic identifier used by both the seed command
-// and the frontend's default landing page. Treat it as a public constant
-// of the development build.
-const DemoSaleID = "00000001-0000-4000-8000-000000000000"
+// DemoProducts is the seeded catalog. The UUIDs are deterministic so the
+// frontend and any test fixtures can reference them directly.
+type DemoProduct struct {
+	ID       string
+	Name     string
+	Capacity int
+}
+
+var DemoProducts = []DemoProduct{
+	{ID: "00000001-0000-4000-8000-000000000001", Name: "Vintage Camera", Capacity: 20},
+	{ID: "00000001-0000-4000-8000-000000000002", Name: "Mechanical Watch", Capacity: 10},
+	{ID: "00000001-0000-4000-8000-000000000003", Name: "Acoustic Guitar", Capacity: 16},
+	{ID: "00000001-0000-4000-8000-000000000004", Name: "Smart Flask", Capacity: 20},
+	{ID: "00000001-0000-4000-8000-000000000005", Name: "Running Shoes", Capacity: 12},
+	{ID: "00000001-0000-4000-8000-000000000006", Name: "Gaming Mouse", Capacity: 15},
+}
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	name := flag.String("name", "Demo Flash Sale", "Human-readable name for the seeded sale.")
-	capacity := flag.Int("capacity", 100, "Total capacity of the seeded sale.")
+	wipe := flag.Bool("wipe", false, "Wipe ALL sales and reservations before seeding (destructive).")
 	flag.Parse()
 
-	if *capacity <= 0 {
-		slog.Error("capacity must be > 0", "capacity", *capacity)
-		os.Exit(1)
-	}
-
-	saleID, err := uuid.Parse(DemoSaleID)
-	if err != nil {
-		slog.Error("invalid DemoSaleID constant", "err", err)
-		os.Exit(1)
-	}
-
 	cfg := config.MustLoad()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	pool, err := db.New(ctx, cfg.DatabaseURL)
@@ -53,26 +54,42 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Idempotent insert. If the sale already exists we leave it untouched —
-	// this lets `make seed` be safe to run repeatedly without resetting
-	// inventory mid-demo.
-	tag, err := pool.Exec(ctx,
-		`INSERT INTO sales (id, name, total_capacity)
-		 VALUES ($1, $2, $3)
-		 ON CONFLICT (id) DO NOTHING`,
-		saleID, *name, *capacity,
-	)
-	if err != nil {
-		slog.Error("insert seed sale", "err", err)
-		os.Exit(1)
+	if *wipe {
+		fmt.Println("Wiping idempotency_records, reservations, sales...")
+		if _, err := pool.Exec(ctx,
+			`TRUNCATE TABLE idempotency_records, reservations, sales RESTART IDENTITY CASCADE`,
+		); err != nil {
+			slog.Error("wipe", "err", err)
+			os.Exit(1)
+		}
 	}
 
-	if tag.RowsAffected() == 0 {
-		fmt.Printf("Demo sale already present: id=%s\n", saleID)
-	} else {
-		fmt.Printf("Seeded demo sale: id=%s name=%q capacity=%d\n", saleID, *name, *capacity)
+	inserted := 0
+	for _, p := range DemoProducts {
+		id, err := uuid.Parse(p.ID)
+		if err != nil {
+			slog.Error("invalid product id", "id", p.ID, "err", err)
+			os.Exit(1)
+		}
+		tag, err := pool.Exec(ctx,
+			`INSERT INTO sales (id, name, total_capacity)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (id) DO NOTHING`,
+			id, p.Name, p.Capacity,
+		)
+		if err != nil {
+			slog.Error("insert", "name", p.Name, "err", err)
+			os.Exit(1)
+		}
+		if tag.RowsAffected() == 1 {
+			inserted++
+			fmt.Printf("  seeded: %s (capacity %d) id=%s\n", p.Name, p.Capacity, p.ID)
+		} else {
+			fmt.Printf("  exists: %s id=%s\n", p.Name, p.ID)
+		}
 	}
-	fmt.Printf("\nFrontend URL (default): http://localhost:5173/\n")
-	fmt.Printf("Explicit URL:           http://localhost:5173/?sale=%s\n", saleID)
-	fmt.Printf("API inventory URL:      http://localhost:8080/api/sales/%s/inventory\n", saleID)
+
+	fmt.Printf("\n%d new product(s) inserted; %d already present.\n", inserted, len(DemoProducts)-inserted)
+	fmt.Printf("\nFrontend URL: http://localhost:5173/\n")
+	fmt.Printf("API list URL: http://localhost:8080/api/sales\n")
 }

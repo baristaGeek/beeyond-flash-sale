@@ -19,8 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ReservationsHandler serves the reservation create/release/get endpoints.
-// MVP scope wires only HandleCreate; the others are added in US4 (T051-T052).
+// ReservationsHandler serves the reservation create/release/get endpoints
+// described in contracts/api.md.
 type ReservationsHandler struct {
 	Pool *pgxpool.Pool
 	Cfg  *config.Config
@@ -239,4 +239,112 @@ func toReservationResponse(r *reservation.Reservation) reservationResponse {
 		ReleasedAt: r.ReleasedAt,
 		ExpiredAt:  r.ExpiredAt,
 	}
+}
+
+// terminalReservationResponse is the body returned by DELETE on an already-
+// terminal reservation. It includes a `code` field so the frontend can render
+// the "already released" UI state without parsing `status` alone.
+type terminalReservationResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Status    string    `json:"status"`
+	Code      ErrorCode `json:"code"`
+	Message   string    `json:"message"`
+}
+
+// HandleDelete implements DELETE /api/reservations/{reservation_id}.
+// See contracts/api.md § Endpoint 4.
+//
+// Behavior:
+//   - Active reservation owned by the calling session: HTTP 200 with the
+//     updated reservation (status=released).
+//   - Already-terminal (released or expired): HTTP 200 with a terminal-shape
+//     body carrying code=RESERVATION_TERMINAL — idempotent per FR-014.
+//   - Unknown id OR foreign session: HTTP 404 RESERVATION_NOT_FOUND.
+func (h *ReservationsHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
+	reservationIDStr := chi.URLParam(r, "reservation_id")
+	reservationID, err := uuid.Parse(reservationIDStr)
+	if err != nil {
+		WriteError(w, &APIError{Code: CodeValidation, Message: "Invalid reservation id."})
+		return
+	}
+	sessionID, ok := SessionFromContext(r.Context())
+	if !ok {
+		WriteError(w, &APIError{Code: CodeValidation, Message: "X-Session-Id header is required."})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var (
+		released   *reservation.Reservation
+		terminalOf *reservation.Reservation
+	)
+	err = db.WithTx(ctx, h.Pool, h.Cfg.LockTimeout, func(ctx context.Context, tx pgx.Tx) error {
+		rRes, relErr := reservation.Release(ctx, tx, reservationID, sessionID)
+		if relErr == nil {
+			released = rRes
+			return nil
+		}
+		if errors.Is(relErr, reservation.ErrReservationTerminal) {
+			// rRes carries the current terminal-state row; surface it.
+			terminalOf = rRes
+			return nil
+		}
+		return relErr
+	})
+	if err != nil {
+		writeReservationError(w, err)
+		return
+	}
+
+	if released != nil {
+		WriteJSON(w, http.StatusOK, toReservationResponse(released))
+		return
+	}
+	if terminalOf != nil {
+		WriteJSON(w, http.StatusOK, terminalReservationResponse{
+			ID:      terminalOf.ID,
+			Status:  string(terminalOf.Status),
+			Code:    CodeReservationTerminal,
+			Message: "This reservation was already released or expired.",
+		})
+		return
+	}
+	WriteError(w, &APIError{Code: CodeInternal, Message: "Empty release response."})
+}
+
+// HandleGet implements GET /api/reservations/{reservation_id}.
+// See contracts/api.md § Endpoint 5. Used by the frontend's countdown timer
+// to resync against the server's authoritative expires_at.
+func (h *ReservationsHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
+	reservationIDStr := chi.URLParam(r, "reservation_id")
+	reservationID, err := uuid.Parse(reservationIDStr)
+	if err != nil {
+		WriteError(w, &APIError{Code: CodeValidation, Message: "Invalid reservation id."})
+		return
+	}
+	sessionID, ok := SessionFromContext(r.Context())
+	if !ok {
+		WriteError(w, &APIError{Code: CodeValidation, Message: "X-Session-Id header is required."})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var got *reservation.Reservation
+	err = db.WithTx(ctx, h.Pool, h.Cfg.LockTimeout, func(ctx context.Context, tx pgx.Tx) error {
+		r, gErr := reservation.Get(ctx, tx, reservationID, sessionID)
+		if gErr != nil {
+			return gErr
+		}
+		got = r
+		return nil
+	})
+	if err != nil {
+		writeReservationError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, toReservationResponse(got))
 }
