@@ -1,0 +1,655 @@
+openapi: 3.1.0
+info:
+  title: Flash Sale Reservation API
+  version: 1.0.0
+  summary: REST API for the Flash Sale inventory reservation system.
+  description: |
+    Machine-readable contract for the Flash Sale Reservation backend.
+
+    This document is the source of truth for request/response shapes, headers,
+    status codes, and error codes. For prose explanations, design rationale,
+    idempotency semantics, and the data model that backs these endpoints, see:
+
+      - [contracts/api.md](./api.md) — narrative API contract.
+      - [data-model.md](../data-model.md) — entity, invariants, and SQL flows.
+      - [spec.md](../spec.md) — functional spec (FR-xxx references).
+
+    ## Conventions
+    - Content type: `application/json` for requests and responses.
+    - Timestamps: RFC 3339 / ISO 8601 UTC.
+    - IDs: UUIDv4.
+    - Sessions: clients send a stable `X-Session-Id` UUID header (anonymous but
+      stable per browser). There are no server-side user accounts in v1.
+    - Every non-2xx response uses the shared `ApiError` envelope.
+    - Mutating endpoints open a single DB transaction at handler entry per the
+      project constitution; lock-timeout failures surface as `LOCK_TIMEOUT`.
+  contact:
+    name: Flash Sale backend
+    url: https://github.com/baristaGeek/beeyond-flash-sale
+
+# No authentication in v1. Sessions are identified via the X-Session-Id header
+# (declared per-operation where required); there are no user accounts or
+# bearer tokens. The empty root-level `security` block documents this
+# explicitly so tooling does not warn about missing security definitions.
+security: []
+
+servers:
+  - url: "{scheme}://{host}{basePath}"
+    description: Configurable backend
+    variables:
+      scheme:
+        default: http
+        enum: [http, https]
+      host:
+        default: localhost:8080
+      basePath:
+        default: /api
+
+tags:
+  - name: Sales
+    description: Admin/seed endpoints for the sale entity.
+  - name: Inventory
+    description: Best-effort reads of current inventory state.
+  - name: Reservations
+    description: Consistency-critical create/release/get for reservations.
+
+paths:
+  /sales:
+    post:
+      tags: [Sales]
+      operationId: createSale
+      summary: Create a sale
+      description: |
+        Seed/admin endpoint used by the load harness and dev workflows. Not
+        exposed in the customer UI.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSaleRequest"
+            examples:
+              fridayDrop:
+                value:
+                  name: Friday Drop
+                  total_capacity: 100
+      responses:
+        "201":
+          description: Sale created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
+              examples:
+                created:
+                  value:
+                    id: 5b1e8c3a-1d2e-4f5a-9b8c-7d6e5f4a3b2c
+                    name: Friday Drop
+                    total_capacity: 100
+                    created_at: "2026-05-22T14:30:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    get:
+      tags: [Inventory]
+      operationId: listInventory
+      summary: List inventory across all sales
+      description: |
+        Single round-trip catalog read for the multi-product dashboard. Returns
+        every sale with its current `currently_reserved` and
+        `available_to_reserve` counts. No transactional lock — best-effort reads
+        with a ≤1s freshness budget. Sorted by `created_at` ascending for stable
+        display order across polls. The invariant
+        `total_capacity = currently_reserved + available_to_reserve` holds per
+        row.
+      responses:
+        "200":
+          description: Inventory snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryListResponse"
+              examples:
+                catalog:
+                  value:
+                    sales:
+                      - sale_id: 00000001-0000-4000-8000-000000000001
+                        name: Vintage Camera
+                        total_capacity: 20
+                        currently_reserved: 3
+                        available_to_reserve: 17
+                      - sale_id: 00000001-0000-4000-8000-000000000002
+                        name: Mechanical Watch
+                        total_capacity: 10
+                        currently_reserved: 0
+                        available_to_reserve: 10
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sales/{sale_id}/inventory:
+    get:
+      tags: [Inventory]
+      operationId: getInventory
+      summary: Read inventory state for a single sale
+      description: |
+        Best-effort read at ≤1s freshness budget. No transactional lock. The
+        invariant `total_capacity = currently_reserved + available_to_reserve`
+        holds at every observed quiescent point.
+      parameters:
+        - $ref: "#/components/parameters/SaleIdPath"
+      responses:
+        "200":
+          description: Single-sale inventory snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Inventory"
+              examples:
+                snapshot:
+                  value:
+                    sale_id: 5b1e8c3a-1d2e-4f5a-9b8c-7d6e5f4a3b2c
+                    name: Vintage Camera
+                    total_capacity: 100
+                    currently_reserved: 12
+                    available_to_reserve: 88
+        "404":
+          $ref: "#/components/responses/SaleNotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sales/{sale_id}/reservations:
+    post:
+      tags: [Reservations]
+      operationId: createReservation
+      summary: Create a reservation against a sale
+      description: |
+        Consistency-critical endpoint. Opens a transaction with
+        `SET LOCAL lock_timeout`, then applies the idempotency claim-or-observe
+        pattern around the reservation insert.
+
+        Replay semantics, scoped to `(session_id, idempotency_key)`:
+          1. **First request with this key**: processed normally; the final
+             status and response body are persisted alongside a SHA-256 hash of
+             the canonical request body before commit.
+          2. **Replay with the same key and matching body**: server returns the
+             exact same response — same `id`, same status, same body. Stock is
+             **not** decremented again. Replays of rejections (e.g.
+             `INSUFFICIENT_STOCK`) are also idempotent.
+          3. **Replay with the same key and a different body**: server returns
+             `422 IDEMPOTENCY_KEY_MISMATCH`. Stock is not touched.
+          4. **Concurrent same-key requests**: serialized via a row-level lock
+             on the idempotency record; the loser blocks until the winner
+             commits, then returns the cached response (or
+             `IDEMPOTENCY_KEY_MISMATCH` if its payload differs).
+
+        The canonical request body for hashing is `{ "quantity": N }` plus the
+        path parameter `sale_id` — requests targeting different sales or
+        different quantities are not the same logical request even if they share
+        an `Idempotency-Key`.
+
+        **Idempotency-Key lifetime**: 24 hours from creation. Replays after the
+        record is garbage-collected behave as a fresh request; clients SHOULD
+        treat the key as single-use across that window.
+      parameters:
+        - $ref: "#/components/parameters/SaleIdPath"
+        - $ref: "#/components/parameters/SessionIdHeader"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReservationRequest"
+            examples:
+              three:
+                value:
+                  quantity: 3
+      responses:
+        "201":
+          description: Reservation created (or replayed from the idempotency cache).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+              examples:
+                active:
+                  value:
+                    id: 9d4a1c2b-3e4f-5a6b-7c8d-9e0f1a2b3c4d
+                    sale_id: 5b1e8c3a-1d2e-4f5a-9b8c-7d6e5f4a3b2c
+                    quantity: 3
+                    status: active
+                    created_at: "2026-05-22T14:30:00Z"
+                    expires_at: "2026-05-22T14:31:00Z"
+        "400":
+          description: |
+            Validation failure. `INVALID_QUANTITY` when `quantity` is missing,
+            ≤ 0, or non-integer; `VALIDATION` for malformed JSON, bad
+            `sale_id`, or missing/oversized `Idempotency-Key`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                invalidQuantity:
+                  summary: INVALID_QUANTITY
+                  value:
+                    error:
+                      code: INVALID_QUANTITY
+                      message: "quantity must be > 0."
+                missingIdempotencyKey:
+                  summary: VALIDATION (missing header)
+                  value:
+                    error:
+                      code: VALIDATION
+                      message: Idempotency-Key header is required.
+        "404":
+          $ref: "#/components/responses/SaleNotFoundError"
+        "409":
+          $ref: "#/components/responses/InsufficientStockError"
+        "422":
+          $ref: "#/components/responses/IdempotencyKeyMismatchError"
+        "503":
+          $ref: "#/components/responses/LockTimeoutError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /reservations/{reservation_id}:
+    delete:
+      tags: [Reservations]
+      operationId: releaseReservation
+      summary: Release a reservation (manual)
+      description: |
+        Idempotent release. Behavior:
+          - Active reservation owned by the calling session → HTTP 200 with the
+            updated reservation (`status: released`).
+          - Already-terminal (released or expired) → HTTP 200 with a
+            terminal-shape body carrying `code: RESERVATION_TERMINAL` (per
+            FR-014). The frontend renders an "already released" state.
+          - Unknown id OR reservation owned by a different session → HTTP 404
+            `RESERVATION_NOT_FOUND` (the second case shares a code to avoid
+            leaking existence to non-owners).
+      parameters:
+        - $ref: "#/components/parameters/ReservationIdPath"
+        - $ref: "#/components/parameters/SessionIdHeader"
+      responses:
+        "200":
+          description: |
+            Release succeeded, or the reservation was already terminal
+            (idempotent path). The two cases are distinguished by the
+            presence of the `code: RESERVATION_TERMINAL` field on the body.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Reservation"
+                  - $ref: "#/components/schemas/TerminalReleaseResponse"
+              examples:
+                released:
+                  summary: Active reservation released
+                  value:
+                    id: 9d4a1c2b-3e4f-5a6b-7c8d-9e0f1a2b3c4d
+                    sale_id: 5b1e8c3a-1d2e-4f5a-9b8c-7d6e5f4a3b2c
+                    quantity: 3
+                    status: released
+                    created_at: "2026-05-22T14:30:00Z"
+                    expires_at: "2026-05-22T14:31:00Z"
+                    released_at: "2026-05-22T14:30:42Z"
+                terminal:
+                  summary: Already released or expired (idempotent)
+                  value:
+                    id: 9d4a1c2b-3e4f-5a6b-7c8d-9e0f1a2b3c4d
+                    status: expired
+                    code: RESERVATION_TERMINAL
+                    message: This reservation was already released or expired.
+        "404":
+          $ref: "#/components/responses/ReservationNotFoundError"
+        "503":
+          $ref: "#/components/responses/LockTimeoutError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    get:
+      tags: [Reservations]
+      operationId: getReservation
+      summary: Read a reservation
+      description: |
+        Lets the frontend resync its countdown timer against the server's
+        authoritative `expires_at`. Returns `RESERVATION_NOT_FOUND` if the
+        reservation is unknown or belongs to a different session.
+      parameters:
+        - $ref: "#/components/parameters/ReservationIdPath"
+        - $ref: "#/components/parameters/SessionIdHeader"
+      responses:
+        "200":
+          description: Reservation found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+        "404":
+          $ref: "#/components/responses/ReservationNotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  parameters:
+    SaleIdPath:
+      name: sale_id
+      in: path
+      required: true
+      description: UUID of the sale.
+      schema:
+        type: string
+        format: uuid
+
+    ReservationIdPath:
+      name: reservation_id
+      in: path
+      required: true
+      description: UUID of the reservation.
+      schema:
+        type: string
+        format: uuid
+
+    SessionIdHeader:
+      name: X-Session-Id
+      in: header
+      required: true
+      description: |
+        Stable per-browser UUID generated by the React app and persisted in
+        `localStorage`. Anonymous but stable; identifies the owner of a
+        reservation for the release and read endpoints.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Client-generated key (1–128 chars) used to make reservation creation
+        safely retriable. Scoped to `(session_id, idempotency_key)`. Replays of
+        the same key with the same body return the original response verbatim;
+        replays with a different body return `IDEMPOTENCY_KEY_MISMATCH`.
+        Lifetime: 24 hours.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+
+  schemas:
+    CreateSaleRequest:
+      type: object
+      additionalProperties: false
+      required: [name, total_capacity]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        total_capacity:
+          type: integer
+          minimum: 1
+
+    Sale:
+      type: object
+      required: [id, name, total_capacity, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        total_capacity:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+
+    Inventory:
+      type: object
+      description: |
+        Inventory snapshot for one sale. Invariant:
+        `total_capacity = currently_reserved + available_to_reserve`.
+      required:
+        - sale_id
+        - name
+        - total_capacity
+        - currently_reserved
+        - available_to_reserve
+      properties:
+        sale_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        total_capacity:
+          type: integer
+          minimum: 0
+        currently_reserved:
+          type: integer
+          minimum: 0
+        available_to_reserve:
+          type: integer
+          minimum: 0
+
+    InventoryListResponse:
+      type: object
+      required: [sales]
+      properties:
+        sales:
+          type: array
+          items:
+            $ref: "#/components/schemas/Inventory"
+
+    CreateReservationRequest:
+      type: object
+      additionalProperties: false
+      required: [quantity]
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+
+    ReservationStatus:
+      type: string
+      enum: [active, released, expired]
+
+    Reservation:
+      type: object
+      required:
+        - id
+        - sale_id
+        - quantity
+        - status
+        - created_at
+        - expires_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        sale_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          minimum: 1
+        status:
+          $ref: "#/components/schemas/ReservationStatus"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        released_at:
+          type: [string, "null"]
+          format: date-time
+          description: Present once the reservation has been released.
+        expired_at:
+          type: [string, "null"]
+          format: date-time
+          description: Present once the reservation has expired by TTL.
+
+    TerminalReleaseResponse:
+      type: object
+      description: |
+        Returned by `DELETE /reservations/{reservation_id}` when the
+        reservation was already terminal (released or expired) at the time of
+        the request. The presence of `code: RESERVATION_TERMINAL` distinguishes
+        this from a fresh-release success body.
+      required: [id, status, code, message]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [released, expired]
+        code:
+          type: string
+          enum: [RESERVATION_TERMINAL]
+        message:
+          type: string
+
+    ApiErrorCode:
+      type: string
+      description: |
+        Stable machine-readable identifier for every failure mode that crosses
+        the API boundary. The React UI switches on this code (not the HTTP
+        status) to render distinct visual states (FR-016, FR-017).
+      enum:
+        - INVALID_QUANTITY
+        - SALE_NOT_FOUND
+        - RESERVATION_NOT_FOUND
+        - RESERVATION_TERMINAL
+        - INSUFFICIENT_STOCK
+        - IDEMPOTENCY_KEY_MISMATCH
+        - LOCK_TIMEOUT
+        - VALIDATION
+        - INTERNAL
+
+    ApiError:
+      type: object
+      description: Standard error envelope used by every non-2xx response.
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              $ref: "#/components/schemas/ApiErrorCode"
+            message:
+              type: string
+              description: Human-readable explanation. Not stable; do not parse.
+            details:
+              type: object
+              additionalProperties: true
+              description: |
+                Code-specific structured context. For `INSUFFICIENT_STOCK` this
+                includes `available_to_reserve` (integer). For
+                `IDEMPOTENCY_KEY_MISMATCH` this includes
+                `original_request_hash` and `submitted_request_hash` (hex
+                SHA-256 strings).
+
+  responses:
+    ValidationError:
+      description: |
+        Generic input validation failure: malformed JSON, bad UUID, missing
+        required header, oversized header value.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: VALIDATION
+              message: Malformed request body.
+
+    SaleNotFoundError:
+      description: No sale exists with the supplied id.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: SALE_NOT_FOUND
+              message: Sale not found.
+
+    ReservationNotFoundError:
+      description: |
+        No reservation matches the supplied id for this session. Also returned
+        when a reservation exists but belongs to a different session, to avoid
+        leaking existence to non-owners.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: RESERVATION_NOT_FOUND
+              message: Reservation not found.
+
+    InsufficientStockError:
+      description: |
+        Requested quantity exceeds the currently available stock.
+        `details.available_to_reserve` carries the live count so the UI can
+        suggest a smaller quantity.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: INSUFFICIENT_STOCK
+              message: Not enough stock is currently available.
+              details:
+                available_to_reserve: 3
+
+    IdempotencyKeyMismatchError:
+      description: |
+        The `Idempotency-Key` was reused with a request body that does not
+        match the body of the original request. `details` carries the SHA-256
+        hashes of both bodies for debugging.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: IDEMPOTENCY_KEY_MISMATCH
+              message: This idempotency key was used previously with a different payload.
+              details:
+                original_request_hash: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+                submitted_request_hash: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+
+    LockTimeoutError:
+      description: |
+        The database row-level lock could not be acquired within the
+        configured `lock_timeout`. Safe to retry.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: LOCK_TIMEOUT
+              message: The server is busy; please retry the request.
+
+    InternalError:
+      description: Unhandled server-side failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          example:
+            error:
+              code: INTERNAL
+              message: An unexpected error occurred.
