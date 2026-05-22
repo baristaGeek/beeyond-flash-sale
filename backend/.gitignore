@@ -1,0 +1,9 @@
+server
+loadtest-bin
+*.test
+*.out
+*.exe
+vendor/
+coverage.out
+.env
+.env.*

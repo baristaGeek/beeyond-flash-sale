@@ -1,0 +1,5 @@
+BEGIN;
+DROP TABLE IF EXISTS reservations;
+DROP TABLE IF EXISTS sales;
+DROP TYPE  IF EXISTS reservation_status;
+COMMIT;
