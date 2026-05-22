@@ -26,7 +26,8 @@ A flash sale event. Capacity is set at creation and immutable for the sale's lif
 **Relationships**: has many `reservations` (FK `reservations.sale_id`).
 
 **Locking role**: The sales row is the serialization anchor for every reservation-create
-transaction. See `reservations.create` flow below.
+transaction. The reservation create flow takes `FOR NO KEY UPDATE` (not plain `FOR
+UPDATE`) on this row — see `reservations.create` flow below for rationale.
 
 ---
 
@@ -187,7 +188,12 @@ SET LOCAL lock_timeout = '2s';
 SELECT id, total_capacity
   FROM sales
  WHERE id = $1
-   FOR UPDATE;          -- ← Principle II: pessimistic row lock.
+   FOR NO KEY UPDATE;   -- ← Principle II: pessimistic row lock.
+-- Why FOR NO KEY UPDATE rather than FOR UPDATE: child INSERTs (e.g. into
+-- idempotency_records, which carries an FK to sales.id) implicitly take
+-- FOR KEY SHARE on the parent row. FOR UPDATE would conflict with that and
+-- collapse concurrent throughput; FOR NO KEY UPDATE serializes our reservation
+-- writers against each other while leaving the FK-validation lane open.
 -- If 0 rows: SALE_NOT_FOUND. If lock_timeout: LOCK_TIMEOUT.
 
 -- (b) Compute current reserved inside the lock.

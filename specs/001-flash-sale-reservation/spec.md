@@ -302,8 +302,9 @@ the same seed and verify the report is identical.
 
 **Idempotent reservation requests**
 
-- **FR-023**: System MUST accept an optional client-supplied idempotency key on every
-  reservation-create request.
+- **FR-023**: System MUST require a client-supplied idempotency key on every
+  reservation-create request. Requests that omit the key MUST be rejected with a
+  typed validation error before any inventory state is touched.
 - **FR-024**: When two reservation-create requests arrive with the same idempotency key
   and an identical request payload (same sale and same quantity), the system MUST
   return the same outcome — the same reservation identifier (when the original succeeded)

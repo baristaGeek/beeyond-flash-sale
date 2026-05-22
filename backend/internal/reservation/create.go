@@ -34,9 +34,17 @@ func Create(ctx context.Context, tx pgx.Tx, p CreateParams) (*Reservation, error
 	}
 
 	// 1. Lock the sale row. SALE_NOT_FOUND if absent.
+	//
+	// FOR NO KEY UPDATE (not FOR UPDATE) is deliberate: it serializes concurrent
+	// reservation transactions against the same sale row (one at a time), while
+	// remaining compatible with the FOR KEY SHARE locks that other transactions
+	// implicitly take when inserting child rows referencing sales.id (e.g., the
+	// idempotency_records FK). Using plain FOR UPDATE would block every
+	// idempotency-record INSERT until the holding transaction commits, which
+	// would collapse throughput under contention.
 	var totalCapacity int
 	err := tx.QueryRow(ctx,
-		`SELECT total_capacity FROM sales WHERE id = $1 FOR UPDATE`,
+		`SELECT total_capacity FROM sales WHERE id = $1 FOR NO KEY UPDATE`,
 		p.SaleID,
 	).Scan(&totalCapacity)
 	if err != nil {

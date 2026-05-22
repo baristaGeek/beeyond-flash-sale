@@ -4,6 +4,7 @@ DATABASE_URL ?= postgres://flashsale:flashsale@localhost:5432/flashsale?sslmode=
 HTTP_ADDR    ?= :8080
 
 .PHONY: up down logs migrate-up migrate-down migrate-reset \
+        seed seed-fresh \
         run-backend run-frontend \
         test test-race test-integration loadtest \
         lint lint-backend lint-frontend
@@ -28,6 +29,12 @@ migrate-reset:
 	@echo "Waiting for postgres to be ready..."
 	@until docker exec flashsale-postgres pg_isready -U flashsale >/dev/null 2>&1; do sleep 1; done
 	$(MAKE) migrate-up
+
+seed:
+	cd backend && DATABASE_URL=$(DATABASE_URL) go run ./cmd/seed
+
+seed-fresh:
+	cd backend && DATABASE_URL=$(DATABASE_URL) go run ./cmd/seed -capacity 50
 
 run-backend:
 	cd backend && DATABASE_URL=$(DATABASE_URL) HTTP_ADDR=$(HTTP_ADDR) go run ./cmd/server

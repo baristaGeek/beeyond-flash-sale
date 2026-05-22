@@ -75,6 +75,13 @@ func (h *ReservationsHandler) HandleCreate(w http.ResponseWriter, r *http.Reques
 	}
 
 	idempotencyKey := r.Header.Get("Idempotency-Key")
+	if idempotencyKey == "" {
+		WriteError(w, &APIError{
+			Code:    CodeValidation,
+			Message: "Idempotency-Key header is required.",
+		})
+		return
+	}
 	if len(idempotencyKey) > 128 {
 		WriteError(w, &APIError{
 			Code:    CodeValidation,
@@ -93,40 +100,7 @@ func (h *ReservationsHandler) HandleCreate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if idempotencyKey == "" {
-		h.handleCreateNoIdempotency(ctx, w, saleID, sessionID, req)
-		return
-	}
-
 	h.handleCreateWithIdempotency(ctx, w, saleID, sessionID, idempotencyKey, requestHash, req)
-}
-
-func (h *ReservationsHandler) handleCreateNoIdempotency(
-	ctx context.Context,
-	w http.ResponseWriter,
-	saleID uuid.UUID,
-	sessionID string,
-	req createReservationRequest,
-) {
-	var resp reservationResponse
-	err := db.WithTx(ctx, h.Pool, h.Cfg.LockTimeout, func(ctx context.Context, tx pgx.Tx) error {
-		r, createErr := reservation.Create(ctx, tx, reservation.CreateParams{
-			SaleID:    saleID,
-			SessionID: sessionID,
-			Quantity:  req.Quantity,
-			TTL:       h.Cfg.ReservationTTL,
-		})
-		if createErr != nil {
-			return createErr
-		}
-		resp = toReservationResponse(r)
-		return nil
-	})
-	if err != nil {
-		writeReservationError(w, err)
-		return
-	}
-	WriteJSON(w, http.StatusCreated, resp)
 }
 
 func (h *ReservationsHandler) handleCreateWithIdempotency(

@@ -1,12 +1,14 @@
 import { SalePage } from "./pages/SalePage";
 
-// For v1 the demo runs a single sale. The sale id can be supplied via URL
-// query param `?sale=<uuid>` so the load-test harness's seeded sale can be
-// viewed without redeploying.
-function readSaleIdFromUrl(): string | null {
-  if (typeof window === "undefined") return null;
+// The demo seed (`make seed`) inserts a sale with this deterministic UUID,
+// so the frontend has something to render even without a `?sale=...` query
+// param. Kept in sync with backend/cmd/seed/main.go DemoSaleID.
+const DEMO_SALE_ID = "00000001-0000-4000-8000-000000000000";
+
+function readSaleIdFromUrl(): string {
+  if (typeof window === "undefined") return DEMO_SALE_ID;
   const params = new URLSearchParams(window.location.search);
-  return params.get("sale");
+  return params.get("sale") ?? DEMO_SALE_ID;
 }
 
 export default function App() {
@@ -19,14 +21,7 @@ export default function App() {
           Reservations expire 60 seconds after they're placed.
         </p>
       </header>
-      {saleId ? (
-        <SalePage saleId={saleId} />
-      ) : (
-        <p>
-          Provide a sale id via <code>?sale=&lt;uuid&gt;</code> in the URL. Seed one with{" "}
-          <code>POST /api/sales</code>.
-        </p>
-      )}
+      <SalePage saleId={saleId} />
     </main>
   );
 }

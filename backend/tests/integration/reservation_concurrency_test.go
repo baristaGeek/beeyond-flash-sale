@@ -35,8 +35,9 @@ func TestConcurrentReservation_NoOversell(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			sessionID := "session-" + uuid.NewString()
+			idemKey := "idem-" + uuid.NewString() // FR-023: Idempotency-Key is mandatory.
 			_ = i
-			res, err := reserve(saleID, sessionID, 1, "")
+			res, err := reserve(saleID, sessionID, 1, idemKey)
 			if err != nil {
 				t.Errorf("request error: %v", err)
 				return
