@@ -11,8 +11,10 @@ description: "Task list for the Flash Sale Inventory Reservation System feature"
 
 **Tests**: Tests are INCLUDED in this task list because Constitution Principle V
 ("Concurrency Correctness Is Tested, Not Assumed") mandates concurrent integration tests
-against a real PostgreSQL instance for every inventory-mutating feature. Frontend unit
-tests are not generated; manual verification per `quickstart.md` is the v1 sign-off.
+against a real PostgreSQL instance for every inventory-mutating feature. Initial v1
+sign-off for the frontend was manual per `quickstart.md`; React unit tests for the
+countdown timer logic and the reserve-flow happy path have since been added — see
+T068–T070 in Phase N.
 
 **Organization**: Tasks are grouped by user story so each story can be implemented and
 verified as an independent increment.
@@ -230,6 +232,9 @@ This is a **web application** project per `plan.md`:
 - [ ] T065 [P] Add structured request logging (request ID, route, status, duration, error code) to `backend/internal/httpapi/middleware.go::RequestLogger` so post-incident traceability (Constitution governance "Traceability") is non-trivial without running the database.
 - [ ] T066 Run the full `specs/001-flash-sale-reservation/quickstart.md` end-to-end on a clean machine and resolve any documentation gaps; record the run as the v1 acceptance.
 - [ ] T067 [P] Update `README.md` with a one-page project overview linking to `.specify/memory/constitution.md`, `specs/001-flash-sale-reservation/spec.md`, and `specs/001-flash-sale-reservation/plan.md`.
+- [X] T068 Add Vitest + React Testing Library to `frontend/` (devDependencies in `frontend/package.json`, `frontend/vitest.config.ts`, `frontend/src/test/setup.ts`, and `test` / `test:run` / `test:ui` scripts). Reverses the earlier "no frontend unit tests" stance for this codebase.
+- [X] T069 [P] React unit tests for the countdown timer (`frontend/src/components/CountdownTimer.test.tsx`). Covers the pure helpers `secondsRemaining`, `formatMMSS`, `urgencyClass` (extracted into `frontend/src/components/CountdownTimer.helpers.ts`) and the `<CountdownTimer />` lifecycle — initial render, urgency-class transitions through `ok`/`warn`/`danger` boundaries, `onExpired` firing after expiry, and cleanup after unmount.
+- [X] T070 [P] React component test for the reserve-flow happy path (`frontend/src/components/ProductCard.test.tsx`). Mocks `reserveSale` from `frontend/src/api/client.ts`; asserts the button calls `reserveSale(sale_id, 1, idempotencyKey)`, the `onReserved` callback fires with the resolved `Reservation`, the pending UI ("Reserving…", disabled) shows during the in-flight request, and the out-of-stock guard disables the button when `available_to_reserve === 0`.
 
 ---
 
