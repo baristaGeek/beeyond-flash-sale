@@ -32,11 +32,23 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
-- Validation pass (iteration 1): all items pass. No [NEEDS CLARIFICATION] markers remain;
-  three potentially ambiguous areas (presence/absence of a confirm step, user identity model,
-  dashboard refresh mechanism) were resolved via documented Assumptions rather than blocking
-  clarifications, because each had a reasonable default consistent with the project
-  constitution and the stated scope.
+- Validation pass (iteration 1, 2026-05-22): all items pass. No [NEEDS CLARIFICATION]
+  markers remain; three potentially ambiguous areas (presence/absence of a confirm step,
+  user identity model, dashboard refresh mechanism) were resolved via documented
+  Assumptions rather than blocking clarifications, because each had a reasonable default
+  consistent with the project constitution and the stated scope.
+- Validation pass (iteration 2, 2026-05-22): re-validated after the addition of
+  FR-023…FR-027 covering idempotent reservation requests (`Idempotency-Key` semantics).
+  All items still pass:
+  - Each new FR is testable and unambiguous (same-key/same-payload replays, same-key/
+    different-payload rejection as a *distinct* typed error, 24h retention floor,
+    concurrent same-key serialization).
+  - No new `[NEEDS CLARIFICATION]` markers were introduced.
+  - The FRs remain technology-agnostic in the spec body — they speak of "idempotency
+    key" and "typed error" rather than HTTP headers or status numbers, even though the
+    companion `contracts/api.md` resolves both concretely.
+  - Success Criteria coverage holds: SC-001 (no oversells) is reinforced by FR-024's
+    explicit "no double-decrement" clause; no new SC required.
 - Content quality note: the spec references "the constitution" only in the Assumptions
   rationale; the spec body itself stays user/business-focused and avoids naming specific
   technologies, frameworks, or HTTP status numbers (the spec speaks of "typed error codes"

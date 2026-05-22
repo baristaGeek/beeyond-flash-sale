@@ -1,6 +1,10 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+shell commands, and other important information, read the current plan at
+`specs/001-flash-sale-reservation/plan.md` and its companion design artifacts
+(`research.md`, `data-model.md`, `contracts/api.md`, `quickstart.md`) in the
+same directory. The constitution at `.specify/memory/constitution.md` is the
+governing document for technical decisions on this project.
 <!-- SPECKIT END -->
 
 

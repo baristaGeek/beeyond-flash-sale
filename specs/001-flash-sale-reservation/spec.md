@@ -300,6 +300,25 @@ the same seed and verify the report is identical.
 - **FR-022**: Load-testing harness MUST be runnable repeatedly against the same seed and
   produce equivalent reports (same pass/fail, same counts) across runs.
 
+**Idempotent reservation requests**
+
+- **FR-023**: System MUST accept an optional client-supplied idempotency key on every
+  reservation-create request.
+- **FR-024**: When two reservation-create requests arrive with the same idempotency key
+  and an identical request payload (same sale and same quantity), the system MUST
+  return the same outcome — the same reservation identifier (when the original succeeded)
+  or the same rejection — and MUST NOT decrement available stock more than once.
+- **FR-025**: When two reservation-create requests arrive with the same idempotency key
+  but a non-identical request payload, the system MUST reject the second request with a
+  distinct, typed error (separate from insufficient-stock and from invalid-quantity)
+  identifying the conflict as a key-payload mismatch, and MUST NOT decrement available
+  stock.
+- **FR-026**: Idempotency replay protection MUST persist for at least 24 hours from the
+  original request; requests after that window MAY be treated as fresh requests.
+- **FR-027**: Concurrent reservation requests sharing the same idempotency key MUST be
+  serialized so that exactly one performs the underlying inventory change and the others
+  observe its cached outcome (or the mismatch error, if their payloads differ).
+
 ### Key Entities
 
 - **Sale**: The flash sale event. Attributes: identifier, total capacity (immutable for the
