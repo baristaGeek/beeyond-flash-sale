@@ -40,6 +40,8 @@ Notes:
 
 ## Tests
 
+**Backend** (Go):
+
 ```bash
 make test              # backend unit tests
 make test-race         # backend tests with -race
@@ -48,6 +50,14 @@ make loadtest          # 100 concurrent reservations against capacity=10
 ```
 
 The load test exits non-zero if the no-oversell invariant is violated.
+
+**Frontend** (Vitest + React Testing Library) — covers the countdown timer logic and the reserve-flow happy path:
+
+```bash
+npm install --prefix frontend           # first time only
+npm run --prefix frontend test:run      # one-shot, exits 0/1 for CI
+npm test --prefix frontend              # watch mode
+```
 
 ## Teardown
 
