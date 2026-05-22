@@ -8,32 +8,38 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// New builds the HTTP handler graph for the MVP scope (US1: atomic reservation
-// + idempotent retries). Subsequent user stories (US2..US6) add the inventory
-// read endpoint, manual release, and the get-reservation endpoint; their
-// routes are NOT registered here so any call to them returns 404 — making the
-// scope of this branch obvious from the routing table alone.
+// New builds the HTTP handler graph. Adds US2 inventory reads (list + single
+// sale) and US4 reservation read/release on top of the US1 reservation create.
+// CORS is permissive for local development; tighten for production.
 func New(pool *pgxpool.Pool, cfg *config.Config) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(RequestID)
 	r.Use(Recover)
 	r.Use(RequestLogger)
+	r.Use(CORS)
 	r.Use(JSONContentType)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// US1: admin/seed endpoint — POST /api/sales.
+	// Inventory (US2): list all sales with derived inventory, or read one.
+	invH := &InventoryHandler{Pool: pool, Cfg: cfg}
+	r.Get("/api/sales", invH.HandleList)
+	r.Get("/api/sales/{sale_id}/inventory", invH.HandleGet)
+
+	// Admin/seed: create a new sale.
 	salesH := &SalesHandler{Pool: pool, Cfg: cfg}
 	r.Post("/api/sales", salesH.HandleCreate)
 
-	// US1: consistency-critical reservation create.
+	// Reservations (US1 + US4): create, get, release. All require a session.
 	resH := &ReservationsHandler{Pool: pool, Cfg: cfg}
 	r.Group(func(r chi.Router) {
 		r.Use(RequireSession)
 		r.Post("/api/sales/{sale_id}/reservations", resH.HandleCreate)
+		r.Get("/api/reservations/{reservation_id}", resH.HandleGet)
+		r.Delete("/api/reservations/{reservation_id}", resH.HandleDelete)
 	})
 
 	return r

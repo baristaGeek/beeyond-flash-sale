@@ -91,7 +91,46 @@ POST /api/sales
 
 ---
 
-### 2. Read inventory state (dashboard)
+### 2a. List inventory (multi-product dashboard)
+
+```
+GET /api/sales
+```
+
+**Response 200**
+
+```json
+{
+  "sales": [
+    {
+      "sale_id": "00000001-0000-4000-8000-000000000001",
+      "name": "Vintage Camera",
+      "total_capacity": 20,
+      "currently_reserved": 3,
+      "available_to_reserve": 17
+    },
+    {
+      "sale_id": "00000001-0000-4000-8000-000000000002",
+      "name": "Mechanical Watch",
+      "total_capacity": 10,
+      "currently_reserved": 0,
+      "available_to_reserve": 10
+    }
+  ]
+}
+```
+
+**Errors**: `INTERNAL`.
+
+**Notes**:
+- One round-trip for the entire catalog so a multi-product dashboard does not need N+1 polls.
+- Sorted by `created_at` ascending for stable display order across polls.
+- No transactional lock — best-effort reads with the same ≤1s freshness budget as endpoint 2b.
+- Invariant `total_capacity = currently_reserved + available_to_reserve` holds per row.
+
+---
+
+### 2b. Read inventory state (single sale)
 
 ```
 GET /api/sales/{sale_id}/inventory
@@ -102,6 +141,7 @@ GET /api/sales/{sale_id}/inventory
 ```json
 {
   "sale_id": "5b1e8c3a-...",
+  "name": "Vintage Camera",
   "total_capacity": 100,
   "currently_reserved": 12,
   "available_to_reserve": 88
@@ -250,9 +290,14 @@ Headers: X-Session-Id: <uuid>
 ```ts
 export type Inventory = {
   sale_id: string;
+  name: string;
   total_capacity: number;
   currently_reserved: number;
   available_to_reserve: number;
+};
+
+export type InventoryListResponse = {
+  sales: Inventory[];
 };
 
 export type ReservationStatus = 'active' | 'released' | 'expired';

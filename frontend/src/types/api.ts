@@ -1,11 +1,16 @@
 // Wire-level types mirroring backend contracts at
 // specs/001-flash-sale-reservation/contracts/api.md.
 
-export type Inventory = {
+export type InventoryRow = {
   sale_id: string;
+  name: string;
   total_capacity: number;
   currently_reserved: number;
   available_to_reserve: number;
+};
+
+export type InventoryListResponse = {
+  sales: InventoryRow[];
 };
 
 export type ReservationStatus = "active" | "released" | "expired";
@@ -49,7 +54,18 @@ export type ApiErrorEnvelope = {
   error: ApiErrorBody;
 };
 
-// Idempotent terminal-replay response shape from DELETE /reservations/:id.
-export type ReleaseResponse =
-  | (Reservation & { code?: never })
-  | { id: string; status: "expired" | "released"; code: "RESERVATION_TERMINAL" };
+// DELETE /api/reservations/{id} can return either an updated Reservation
+// (happy path) or a terminal shape carrying a RESERVATION_TERMINAL code
+// (idempotent path). The discriminator is the optional `code` field.
+export type ReleaseTerminal = {
+  id: string;
+  status: "expired" | "released";
+  code: "RESERVATION_TERMINAL";
+  message: string;
+};
+
+export type ReleaseResponse = Reservation | ReleaseTerminal;
+
+export function isReleaseTerminal(r: ReleaseResponse): r is ReleaseTerminal {
+  return (r as ReleaseTerminal).code === "RESERVATION_TERMINAL";
+}

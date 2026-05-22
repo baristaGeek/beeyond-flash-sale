@@ -1,0 +1,355 @@
+/* Global styles for the Atomic Inventory dashboard. */
+
+:root {
+  --color-bg: #f3f4f6;
+  --color-surface: #ffffff;
+  --color-surface-muted: #e5e7eb;
+  --color-text: #0f172a;
+  --color-text-muted: #6b7280;
+  --color-header-bg: #3b4a63;
+  --color-panel-bg: #d8dae0;
+  --color-border: #e5e7eb;
+  --color-accent: #3b4a63;
+  --color-bar-fill: #3b4a63;
+  --color-bar-bg: #e5e7eb;
+  --color-toast-bg: #c84a4a;
+  --color-toast-fg: #ffffff;
+  --color-success: #16a34a;
+  --color-status-dot: #22c55e;
+  --color-countdown-ok: #f4c430;
+  --color-countdown-warn: #f4c430;
+  --color-countdown-danger: #d83933;
+  --color-button: #ffffff;
+  --color-button-border: #cbd5e1;
+  --color-button-hover-bg: #f3f4f6;
+  --color-button-disabled-bg: #e5e7eb;
+  --color-button-disabled-fg: #9ca3af;
+
+  --radius-card: 10px;
+  --radius-panel: 12px;
+  --radius-button: 6px;
+  --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 1400px;
+  margin: 32px auto;
+  padding: 0 24px;
+}
+
+/* ---- Header ---- */
+
+.header {
+  background: var(--color-header-bg);
+  color: #fff;
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+  padding: 18px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header__title { font-size: 22px; font-weight: 500; margin: 0; }
+
+.header__right { display: flex; align-items: center; gap: 12px; }
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: var(--radius-pill);
+  padding: 4px 14px;
+  font-size: 13px;
+  color: #fff;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-status-dot);
+  box-shadow: 0 0 6px var(--color-status-dot);
+}
+
+.status-dot--stale { background: #9ca3af; box-shadow: none; }
+
+.refresh-button {
+  background: transparent;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  padding: 6px 12px;
+  border-radius: var(--radius-button);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.refresh-button:hover { background: rgba(255, 255, 255, 0.1); }
+
+/* ---- Layout ---- */
+
+.page-shell {
+  background: var(--color-panel-bg);
+  border-radius: 0 0 var(--radius-panel) var(--radius-panel);
+  padding: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 24px;
+}
+
+@media (max-width: 900px) {
+  .page-shell { grid-template-columns: 1fr; }
+}
+
+.section-title {
+  font-size: 18px;
+  margin: 0 0 16px 0;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* ---- Inventory grid ---- */
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1100px) { .inventory-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px)  { .inventory-grid { grid-template-columns: 1fr; } }
+
+/* ---- Product card ---- */
+
+.product-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  padding: 20px;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.product-card__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.product-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.product-name {
+  font-weight: 600;
+  font-size: 17px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+/* ---- Stock meter ---- */
+
+.stock-meter__label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+}
+
+.stock-meter__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-bar-bg);
+  overflow: hidden;
+}
+
+.stock-meter__fill {
+  height: 100%;
+  background: var(--color-bar-fill);
+  transition: width 200ms ease-out;
+}
+
+.stock-meter__row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.stock-meter__row--muted { color: var(--color-text-muted); }
+
+/* ---- Buttons ---- */
+
+.btn {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--radius-button);
+  border: 1px solid var(--color-button-border);
+  background: var(--color-button);
+  color: var(--color-text);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 120ms ease-out;
+}
+
+.btn:hover:not(:disabled) { background: var(--color-button-hover-bg); }
+
+.btn:disabled {
+  background: var(--color-button-disabled-bg);
+  color: var(--color-button-disabled-fg);
+  cursor: not-allowed;
+}
+
+.btn--small { padding: 4px 10px; font-size: 12px; width: auto; }
+
+/* ---- Reservations panel ---- */
+
+.reservations-panel {
+  background: transparent;
+}
+
+.reservation-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  padding: 16px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-card);
+}
+
+.reservation-card__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.reservation-card__name {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.reservation-id-badge {
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.countdown-label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-top: 10px;
+}
+
+.countdown {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0 4px 0;
+}
+
+.countdown--ok { color: var(--color-countdown-ok); }
+.countdown--warn { color: var(--color-countdown-warn); }
+.countdown--danger { color: var(--color-countdown-danger); }
+
+.reservation-card__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.unit-held {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.reservations-empty {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  padding: 8px 4px;
+}
+
+/* ---- Toast ---- */
+
+.toast-region {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--color-toast-bg);
+  color: var(--color-toast-fg);
+  border-radius: 8px;
+  padding: 12px 18px;
+  min-width: 320px;
+  max-width: 560px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  pointer-events: auto;
+  animation: toast-in 180ms ease-out;
+}
+
+.toast__icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.toast__title { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+.toast__body  { font-size: 13px; line-height: 1.4; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

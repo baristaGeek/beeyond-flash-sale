@@ -120,3 +120,25 @@ func JSONContentType(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// CORS allows the local Vite dev server (and curl) to talk to the API
+// without preflight failures. Permissive for development; production should
+// constrain Access-Control-Allow-Origin.
+func CORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Session-Id, Idempotency-Key")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
