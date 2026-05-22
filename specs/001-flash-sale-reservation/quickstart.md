@@ -53,7 +53,18 @@ make migrate-reset   # drops and recreates the schema
 
 ---
 
-## 3. Run the backend
+## 3. Seed a demo sale (recommended for UI development)
+
+```bash
+make seed
+```
+
+Inserts a deterministic demo sale (`id=00000001-0000-4000-8000-000000000000`,
+capacity 100) so the frontend always has something to render. Idempotent: re-running
+is a no-op. The frontend's default landing page points at this sale id when no
+`?sale=<uuid>` is present in the URL.
+
+## 4. Run the backend
 
 ```bash
 cd backend
@@ -65,7 +76,7 @@ inside the same process and polls every 500ms.
 
 ---
 
-## 4. Run the frontend
+## 5. Run the frontend
 
 In a second terminal:
 
@@ -80,7 +91,7 @@ Vite serves the dashboard at `http://localhost:5173`, with API requests proxied 
 
 ---
 
-## 5. Smoke test the API by hand
+## 6. Smoke test the API by hand
 
 ```bash
 # Seed a sale with 10 units.
@@ -91,10 +102,11 @@ SALE_ID=$(curl -s -X POST http://localhost:8080/api/sales \
 # Read inventory.
 curl -s "http://localhost:8080/api/sales/$SALE_ID/inventory" | jq
 
-# Reserve 3 units.
+# Reserve 3 units. Idempotency-Key is mandatory.
 RES_ID=$(curl -s -X POST "http://localhost:8080/api/sales/$SALE_ID/reservations" \
   -H 'Content-Type: application/json' \
   -H 'X-Session-Id: 11111111-1111-1111-1111-111111111111' \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"quantity":3}' | jq -r .id)
 
 # Inventory after reservation.
@@ -112,7 +124,7 @@ curl -s "http://localhost:8080/api/sales/$SALE_ID/inventory" | jq
 
 ---
 
-## 6. Verify the headline guarantee: no oversells under concurrency
+## 7. Verify the headline guarantee: no oversells under concurrency
 
 Run the load harness. This is the test that turns the no-oversell claim from
 "we believe it works" into "we can prove it works."
@@ -154,13 +166,14 @@ Re-run with the same args; the resulting report should match line-for-line modul
 
 ---
 
-## 7. Verify TTL expiry
+## 8. Verify TTL expiry
 
 ```bash
 # Reserve, then wait without releasing.
 curl -s -X POST "http://localhost:8080/api/sales/$SALE_ID/reservations" \
   -H 'Content-Type: application/json' \
   -H 'X-Session-Id: aaaa...' \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"quantity":5}'
 
 # Watch inventory; ~60 seconds later, currently_reserved should drop back to 0.
@@ -171,12 +184,13 @@ SC-002: expiry within 60s + 1s tolerance.
 
 ---
 
-## 8. Verify desync release (the edge case)
+## 9. Verify desync release (the edge case)
 
 ```bash
 # Reserve, wait > 60s for auto-expiry, then attempt release.
 RES_ID=$(curl -s -X POST "http://localhost:8080/api/sales/$SALE_ID/reservations" \
   -H 'X-Session-Id: bbbb...' -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"quantity":2}' | jq -r .id)
 
 sleep 65
@@ -190,7 +204,7 @@ trace, no double-return of stock. Verifies SC-006 and FR-014.
 
 ---
 
-## 9. Run the test suites
+## 10. Run the test suites
 
 ```bash
 # Pure unit tests (fast).
@@ -209,11 +223,11 @@ cd ../frontend && npm run typecheck
 npm test
 ```
 
-CI runs all of the above plus the load harness (step 6) as a final gate.
+CI runs all of the above plus the load harness (step 7) as a final gate.
 
 ---
 
-## 10. Tear down
+## 11. Tear down
 
 ```bash
 docker compose down -v   # -v wipes the Postgres volume; safe for dev.

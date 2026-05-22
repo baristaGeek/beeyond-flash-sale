@@ -123,7 +123,7 @@ GET /api/sales/{sale_id}/inventory
 POST /api/sales/{sale_id}/reservations
 Headers:
   X-Session-Id:    <uuid>       (required)
-  Idempotency-Key: <string>     (optional but strongly recommended; 1–128 chars)
+  Idempotency-Key: <string>     (required; 1–128 chars)
 ```
 
 **Request**
@@ -145,14 +145,14 @@ Headers:
 }
 ```
 
-**Errors**: `INVALID_QUANTITY`, `SALE_NOT_FOUND`, `INSUFFICIENT_STOCK` (with
-`details.available_to_reserve`), `IDEMPOTENCY_KEY_MISMATCH`, `LOCK_TIMEOUT`, `INTERNAL`.
+**Errors**: `VALIDATION` (missing/empty `Idempotency-Key`), `INVALID_QUANTITY`,
+`SALE_NOT_FOUND`, `INSUFFICIENT_STOCK` (with `details.available_to_reserve`),
+`IDEMPOTENCY_KEY_MISMATCH`, `LOCK_TIMEOUT`, `INTERNAL`.
 
-**Server flow (no Idempotency-Key)**: Opens a transaction, `SELECT ... FOR UPDATE` on the
-sale row, counts active reservations, inserts new reservation, commits — or rolls back and
-returns `INSUFFICIENT_STOCK`. See `data-model.md` for the exact SQL.
-
-**Server flow (with Idempotency-Key)**: Same transaction, but additionally:
+**Server flow**: Opens a transaction with `SET LOCAL lock_timeout`, applies the
+idempotency claim-or-observe pattern wrapping the consistency-critical insert.
+See `data-model.md § reservations.create with Idempotency-Key` for the exact SQL.
+Specifically:
 
 1. **First request with this key** (scope: `session_id` + `idempotency_key`):
    the request is processed normally; the final HTTP status code and response body are

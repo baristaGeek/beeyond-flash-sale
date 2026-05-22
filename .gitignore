@@ -1,0 +1,35 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Go
+backend/server
+backend/loadtest-bin
+backend/*.test
+backend/*.out
+backend/vendor/
+backend/coverage.out
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/coverage/
+frontend/.vite/
+
+# Logs
+*.log
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Local DB volumes (compose)
+data/
+postgres-data/
